@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/grafana/grafana/internal/cuectx"
-	"github.com/grafana/grafana/internal/k8sbridge"
+	"github.com/grafana/grafana/internal/components"
 	"github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/schema"
 	"github.com/grafana/thema"
@@ -21,52 +21,77 @@ import (
 // TODO: I think we should define a generic store interface similar to k8s rest.Interface
 // and have storeset around (similar to clientset) from which we can grab specific store implementation for schema.
 type Store interface {
-	Get(ctx context.Context, uid string) (CR, error)
-	Insert(ctx context.Context, ds CR) error
-	Update(ctx context.Context, ds CR) error
+	Get(ctx context.Context, uid string) (ModelObject, error)
+	Insert(ctx context.Context, ds ModelObject) error
+	Update(ctx context.Context, ds ModelObject) error
 	Delete(ctx context.Context, uid string) error
 }
 
 // Coremodel
 type Coremodel struct {
-	schema schema.ObjectSchema
-	client rest.Interface
 	store  Store
+	client rest.Interface
+	schema schema.ObjectSchema
 }
 
-// ProvideDatasourceCoreModel
-func ProvideDatasourceCoreModel(bridge k8sbridge.Service, store Store) (*Coremodel, error) {
-	schema, ok := schema.LoadCoreSchema(schemaName)
-	if !ok {
-		return nil, fmt.Errorf("no schema registered for %s", schemaName)
-	}
-
-	client, err := bridge.Client().ClientForSchema(schema)
+// ProvideCoremodel
+func ProvideCoremodel(store Store, schemaLib thema.Library) (*Coremodel, error) {
+	schema, err := schema.LoadThemaSchema(
+		cuePath,
+		cueFS,
+		schemaLib,
+		schemaVersion,
+		&ModelSpec{},
+		groupName,
+		groupVersion,
+		schemaOpenapi,
+		&ModelObject{},
+		&ModelObjectList{},
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Coremodel{
-		client: client,
 		store:  store,
 		schema: schema,
 	}, nil
 }
 
 // Schema
-func (d *Coremodel) Schema() schema.ObjectSchema {
-	return d.schema
+func (m *Coremodel) Schema() schema.ObjectSchema {
+	return m.schema
+}
+
+// RegisterController
+func (m *Coremodel) RegisterController(bridge components.Bridge) error {
+	cli, err := bridge.ClientForSchema(m.schema)
+	if err != nil {
+		return err
+	}
+
+	if err := ctrl.
+		NewControllerManagedBy(bridge.ControllerManager()).
+		Named("datasources-controller").
+		For(&ModelObject{}).
+		Complete(m); err != nil {
+		return err
+	}
+
+	m.client = cli
+	return nil
 }
 
 // Reconcile
-func (d *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ds := CR{}
+func (m *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	fmt.Println("Got for reconciliation", req.String())
 
-	err := d.client.Get().Namespace(req.Namespace).Resource("datasources").Name(req.Name).Do(ctx).Into(&ds)
+	ds := ModelObject{}
+	err := m.client.Get().Namespace(req.Namespace).Resource("datasources").Name(req.Name).Do(ctx).Into(&ds)
 
 	// TODO: check ACTUAL error
-	if errors.Is(err, errNotFound) {
-		return reconcile.Result{}, d.store.Delete(ctx, req.Name)
+	if errors.Is(err, rest.ErrNotInCluster) {
+		return reconcile.Result{}, m.store.Delete(ctx, req.Name)
 	}
 
 	if err != nil {
@@ -76,7 +101,7 @@ func (d *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (recon
 		}, err
 	}
 
-	_, err = d.store.Get(ctx, string(ds.UID))
+	_, err = m.store.Get(ctx, string(ds.UID))
 	if err != nil {
 		if !errors.Is(err, models.ErrDataSourceNotFound) {
 			return reconcile.Result{
@@ -85,7 +110,7 @@ func (d *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (recon
 			}, err
 		}
 
-		if err := d.store.Insert(ctx, ds); err != nil {
+		if err := m.store.Insert(ctx, ds); err != nil {
 			return reconcile.Result{
 				Requeue:      true,
 				RequeueAfter: 1 * time.Minute,
@@ -93,7 +118,7 @@ func (d *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (recon
 		}
 	}
 
-	if err := d.store.Update(ctx, ds); err != nil {
+	if err := m.store.Update(ctx, ds); err != nil {
 		return reconcile.Result{
 			Requeue:      true,
 			RequeueAfter: 1 * time.Minute,
@@ -101,32 +126,4 @@ func (d *Coremodel) Reconcile(ctx context.Context, req reconcile.Request) (recon
 	}
 
 	return reconcile.Result{}, nil
-}
-
-func init() {
-	lib := cuectx.ProvideThemaLibrary()
-	lin, err := NewLineage(lib)
-	if err != nil {
-		panic(err)
-	}
-
-	// Calling this ensures our program cannot start if the Go DataSource.Model type
-	// is not aligned with the canonical schema version in our lineage
-	if _, err := NewJSONKernel(lin); err != nil {
-		panic(err)
-	}
-
-	zsch, _ := lin.Schema(thema.SV(0, 0))
-	if err = thema.AssignableTo(zsch, Model{}); err != nil {
-		panic(err)
-	}
-
-	schema.RegisterCoreSchema(
-		schema.NewThemaSchema(
-			lin,
-			groupName, groupVersion,
-			openapiSchema,
-			&CR{}, &CRList{},
-		),
-	)
 }

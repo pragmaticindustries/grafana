@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -15,7 +15,7 @@ type ObjectSchema interface {
 	Name() string
 	GroupName() string
 	GroupVersion() string
-	OpenAPISchema() apiextensionsv1beta1.JSONSchemaProps
+	OpenAPISchema() apiextensionsv1.JSONSchemaProps
 	RuntimeObjects() []runtime.Object
 }
 

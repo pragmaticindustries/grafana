@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 
 	"github.com/grafana/grafana/internal/components"
@@ -41,8 +40,13 @@ type Service struct {
 	logger  log.Logger
 }
 
+// CoremodelRegistry
+type CoremodelRegistry interface {
+	Coremodels() []components.Coremodel
+}
+
 // ProvideService
-func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, modelRegistry *components.Registry) (*Service, error) {
+func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, registry CoremodelRegistry) (*Service, error) {
 	enabled := features.IsEnabled(featuremgmt.FlagIntentapi)
 	if !enabled {
 		return &Service{
@@ -77,16 +81,16 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, model
 		GroupVersion: schemaGroupVersion,
 	}
 
-	if err := schemaBuilder.AddToScheme(schm); err != nil {
-		return nil, err
-	}
-
-	models := modelRegistry.Coremodels()
+	models := registry.Coremodels()
 	schemas := make(schema.CoreSchemaList, 0, len(models))
 	for _, m := range models {
 		s := m.Schema()
 		schemas = append(schemas, s)
 		schemaBuilder.Register(s.RuntimeObjects()...)
+	}
+
+	if err := schemaBuilder.AddToScheme(schm); err != nil {
+		return nil, err
 	}
 
 	// TODO: pass models to clientset to create clients and register CRDs.
@@ -102,40 +106,22 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, model
 		return nil, err
 	}
 
-	for _, m := range models {
-		// Check if there's a reconciler.
-		rec, ok := m.(components.ReconcilableCoremodel)
-		if !ok {
-			continue
-		}
-
-		s := m.Schema()
-		obj := s.RuntimeObjects()[0] // TODO: split
-		cli, ok := obj.(ctrlclient.Object)
-		if !ok {
-			return nil, errors.New("yikes") // TODO
-		}
-
-		if err := ctrl.NewControllerManagedBy(mgr).
-			Named(fmt.Sprintf("%s-controller", s.Name())). // TODO: versioning?
-			For(cli).
-			Complete(rec); err != nil {
-			return nil, err
-		}
-	}
-
-	return &Service{
+	svc := &Service{
 		config:  config,
 		client:  cset,
 		schemas: schemas,
 		manager: mgr,
 		enabled: enabled,
 		logger:  log.New("k8sbridge.service"),
-	}, nil
-}
+	}
 
-func (s *Service) RegisterCoremodel(model components.Coremodel) error {
-	return nil
+	for _, m := range models {
+		if err := m.RegisterController(svc); err != nil {
+			return nil, err
+		}
+	}
+
+	return svc, nil
 }
 
 // IsDisabled
@@ -152,19 +138,14 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
-// Schemas
-func (s *Service) Schemas() schema.CoreSchemaList {
-	return s.schemas
-}
-
 // RestConfig
 func (s *Service) RestConfig() *rest.Config {
 	return s.config
 }
 
 // Client
-func (s *Service) Client() *Clientset {
-	return s.client
+func (s *Service) ClientForSchema(schema schema.ObjectSchema) (rest.Interface, error) {
+	return s.client.ClientForSchema(schema)
 }
 
 // ControllerManager

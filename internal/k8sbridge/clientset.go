@@ -1,9 +1,13 @@
 package k8sbridge
 
 import (
+	"context"
 	"fmt"
 
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	"cuelang.org/go/pkg/strings"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -15,19 +19,26 @@ import (
 
 // Clientset
 type Clientset struct {
-	*kubernetes.Clientset
-	clients map[k8schema.GroupVersion]*rest.RESTClient
+	k8sset  *kubernetes.Clientset
+	extset  *apiextensionsclient.Clientset
+	coreset map[k8schema.GroupVersion]*rest.RESTClient
+	crds    map[k8schema.GroupVersion]apiextensionsv1.CustomResourceDefinition
 }
 
 // NewClientset
 func NewClientset(cfg *rest.Config, schemas schema.CoreSchemaList) (*Clientset, error) {
-	clientset, err := kubernetes.NewForConfig(cfg)
+	k8sset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	clients := make(map[k8schema.GroupVersion]*rest.RESTClient, len(schemas))
+	extset, err := apiextensionsclient.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 
+	coreset := make(map[k8schema.GroupVersion]*rest.RESTClient, len(schemas))
+	crds := make(map[k8schema.GroupVersion]apiextensionsv1.CustomResourceDefinition, len(schemas))
 	for _, s := range schemas {
 		ver := k8schema.GroupVersion{
 			Group:   s.GroupName(),
@@ -43,12 +54,28 @@ func NewClientset(cfg *rest.Config, schemas schema.CoreSchemaList) (*Clientset, 
 			return nil, err
 		}
 
-		clients[ver] = cli
+		crdObj := NewCRD(s.Name(), s.GroupName(), s.GroupVersion(), s.OpenAPISchema())
+		crd, err := extset.
+			ApiextensionsV1().
+			CustomResourceDefinitions().
+			Create(
+				context.TODO(),
+				&crdObj,
+				metav1.CreateOptions{},
+			)
+		if err != nil && !errors.IsAlreadyExists(err) {
+			return nil, err
+		}
+
+		crds[ver] = *crd
+		coreset[ver] = cli
 	}
 
 	return &Clientset{
-		clientset,
-		clients,
+		k8sset:  k8sset,
+		extset:  extset,
+		coreset: coreset,
+		crds:    crds,
 	}, nil
 }
 
@@ -59,7 +86,7 @@ func (c *Clientset) ClientForSchema(schema schema.ObjectSchema) (*rest.RESTClien
 		Version: schema.GroupVersion(),
 	}
 
-	v, ok := c.clients[k]
+	v, ok := c.coreset[k]
 	if !ok {
 		return nil, fmt.Errorf("no client registered for schema: %s/%s", schema.GroupName(), schema.GroupVersion())
 	}
@@ -70,24 +97,44 @@ func (c *Clientset) ClientForSchema(schema schema.ObjectSchema) (*rest.RESTClien
 // NewCRD
 // TODO: use these to automatically register CRDs to the server.
 func NewCRD(
-	objectKind, groupName, groupVersion string, schema apiextensionsv1beta1.JSONSchemaProps,
-) apiextensionsv1beta1.CustomResourceDefinition {
-	return apiextensionsv1beta1.CustomResourceDefinition{
+	objectKind, groupName, groupVersion string, schema apiextensionsv1.JSONSchemaProps,
+) apiextensionsv1.CustomResourceDefinition {
+	return apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s.%s", groupName, groupVersion),
+			Name: fmt.Sprintf("%ss.%s", objectKind, groupName),
 		},
-		Spec: apiextensionsv1beta1.CustomResourceDefinitionSpec{
-			Group:   groupName,
-			Version: groupVersion,
-			Scope:   apiextensionsv1beta1.NamespaceScoped, // TODO: make configurable?
-			Names: apiextensionsv1beta1.CustomResourceDefinitionNames{
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: groupName,
+			Scope: apiextensionsv1.NamespaceScoped, // TODO: make configurable?
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Plural:   objectKind + "s", // TODO: figure out better approach?
 				Singular: objectKind,
-				Kind:     objectKind,
+				Kind:     capitalize(objectKind),
 			},
-			Validation: &apiextensionsv1beta1.CustomResourceValidation{
-				OpenAPIV3Schema: &schema,
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    groupVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &schema,
+					},
+				},
 			},
 		},
 	}
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+
+	u := strings.ToUpper(string(s[0]))
+
+	if len(s) == 1 {
+		return u
+	}
+
+	return u + s[1:]
 }
