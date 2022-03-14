@@ -198,6 +198,59 @@ func TestRouteGetRuleStatuses(t *testing.T) {
 `, string(r.Body()))
 	})
 
+	t.Run("with the inclusion of private Labels", func(t *testing.T) {
+		fakeStore, fakeAIM, api := setupAPI(t)
+		generateRuleAndInstanceWithQuery(t, orgID, fakeAIM, fakeStore, withClassicConditionSingleQuery())
+
+		req, err := http.NewRequest("GET", "/api/v1/rules?includePrivateLabels=true", nil)
+		require.NoError(t, err)
+		c := &models.ReqContext{Context: &web.Context{Req: req}, SignedInUser: &models.SignedInUser{OrgId: orgID}}
+
+		r := api.RouteGetRuleStatuses(c)
+		require.Equal(t, http.StatusOK, r.Status())
+		require.JSONEq(t, `
+{
+	"status": "success",
+	"data": {
+		"groups": [{
+			"name": "rule-group",
+			"file": "namespaceUID",
+			"rules": [{
+				"state": "inactive",
+				"name": "AlwaysFiring",
+				"query": "vector(1)",
+				"alerts": [{
+					"labels": {
+						"job": "prometheus",
+						"__alert_rule_namespace_uid__": "test_namespace_uid",
+						"__alert_rule_uid__": "test_alert_rule_uid_0"
+					},
+					"annotations": {
+						"severity": "critical"
+					},
+					"state": "Normal",
+					"activeAt": "0001-01-01T00:00:00Z",
+					"value": ""
+				}],
+				"labels": {
+					"__a_private_label_on_the_rule__": "a_value"
+				},
+				"health": "ok",
+				"lastError": "",
+				"type": "alerting",
+				"lastEvaluation": "2022-03-10T14:01:00Z",
+				"duration": 180,
+				"evaluationTime": 60
+			}],
+			"interval": 60,
+			"lastEvaluation": "2022-03-10T14:01:00Z",
+			"evaluationTime": 0
+		}]
+	}
+}
+`, string(r.Body()))
+	})
+
 	t.Run("with a rule that has multiple queries", func(t *testing.T) {
 		fakeStore, fakeAIM, api := setupAPI(t)
 		generateRuleAndInstanceWithQuery(t, orgID, fakeAIM, fakeStore, withExpressionsMultiQuery())
@@ -262,7 +315,11 @@ func generateRuleAndInstanceWithQuery(t *testing.T, orgID int64, fakeAIM *fakeAl
 	rules := ngmodels.GenerateAlertRules(1, ngmodels.AlertRuleGen(withOrgID(orgID), asFixture(), query))
 
 	fakeAIM.GenerateAlertInstances(orgID, rules[0].UID, 1, func(s *state.State) *state.State {
-		s.Labels = data.Labels{"job": "prometheus"}
+		s.Labels = data.Labels{
+			"job":                          "prometheus",
+			"__alert_rule_namespace_uid__": "test_namespace_uid",
+			"__alert_rule_uid__":           "test_alert_rule_uid_0",
+		}
 		s.Annotations = data.Labels{"severity": "critical"}
 		return s
 	})
@@ -280,7 +337,7 @@ func asFixture() func(r *ngmodels.AlertRule) {
 		r.NamespaceUID = "namespaceUID"
 		r.RuleGroup = "rule-group"
 		r.UID = "RuleUID"
-		r.Labels = nil
+		r.Labels = map[string]string{"__a_private_label_on_the_rule__": "a_value"}
 		r.Annotations = nil
 		r.IntervalSeconds = 60
 		r.For = 180 * time.Second

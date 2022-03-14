@@ -183,6 +183,12 @@ func (srv PrometheusSrv) RouteGetRuleStatuses(c *models.ReqContext) response.Res
 			if alertState.State == eval.Alerting {
 				valString = alertState.LastEvaluationString
 			}
+
+			if !c.QueryBoolWithDefault(queryIncludePrivateLabels, false) {
+				removePrivateLabels(map[string]string(newRule.Labels))
+				removePrivateLabels(alertState.Labels)
+			}
+
 			alert := &apimodels.Alert{
 				Labels:      map[string]string(alertState.Labels),
 				Annotations: alertState.Annotations,
