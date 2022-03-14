@@ -142,3 +142,29 @@ type Alert struct {
 // override the labels type with a map for generation.
 // The custom marshaling for labels.Labels ends up doing this anyways.
 type overrideLabels map[string]string
+
+// swagger:parameters RouteGetGrafanaAlertStatuses
+type GetGrafanaAlertStatusesParams struct {
+	// Hide private labels (labels that start and end with __ e.g. __alert_rule_id__).
+	// in:query
+	// required:false
+	// default:false
+	IncludePrivateLabels bool `json:"includePrivateLabels"`
+}
+
+// swagger:parameters RouteGetGrafanaRuleStatuses
+type GetGrafanaRuleStatusesParams struct {
+	// Hide private labels (labels that start and end with __ e.g. __alert_rule_id__).
+	// in:query
+	// required:false
+	// default:false
+	IncludePrivateLabels bool `json:"includePrivateLabels"`
+	// Filter the list of rules to those that belong to the specified dashboard UID.
+	// in: query
+	// required:false
+	DashboardUID string
+	// Filter the list of rules to those that belong to the specified panel ID. Dashboard UID must be specified.
+	// in: query
+	// required:false
+	PanelID int64
+}

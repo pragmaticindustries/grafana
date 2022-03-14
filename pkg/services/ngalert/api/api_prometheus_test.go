@@ -21,19 +21,14 @@ import (
 )
 
 func TestRouteGetAlertStatuses(t *testing.T) {
-	fakeStore := store.NewFakeRuleStore(t)
-	fakeAlertInstanceManager := NewFakeAlertInstanceManager(t)
 	orgID := int64(1)
 
-	api := PrometheusSrv{
-		log:     log.NewNopLogger(),
-		manager: fakeAlertInstanceManager,
-		store:   fakeStore,
-	}
-
-	c := &models.ReqContext{SignedInUser: &models.SignedInUser{OrgId: orgID}}
-
 	t.Run("with no alerts", func(t *testing.T) {
+		_, _, api := setupAPI(t)
+		req, err := http.NewRequest("GET", "/api/v1/alerts", nil)
+		require.NoError(t, err)
+		c := &models.ReqContext{Context: &web.Context{Req: req}, SignedInUser: &models.SignedInUser{OrgId: orgID}}
+
 		r := api.RouteGetAlertStatuses(c)
 		require.Equal(t, http.StatusOK, r.Status())
 		require.JSONEq(t, `
@@ -47,7 +42,54 @@ func TestRouteGetAlertStatuses(t *testing.T) {
 	})
 
 	t.Run("with two alerts", func(t *testing.T) {
-		fakeAlertInstanceManager.GenerateAlertInstances(1, util.GenerateShortUID(), 2)
+		_, fakeAIM, api := setupAPI(t)
+		fakeAIM.GenerateAlertInstances(1, util.GenerateShortUID(), 2)
+		req, err := http.NewRequest("GET", "/api/v1/alerts", nil)
+		require.NoError(t, err)
+		c := &models.ReqContext{Context: &web.Context{Req: req}, SignedInUser: &models.SignedInUser{OrgId: orgID}}
+
+		r := api.RouteGetAlertStatuses(c)
+		require.Equal(t, http.StatusOK, r.Status())
+		require.JSONEq(t, `
+{
+	"status": "success",
+	"data": {
+		"alerts": [{
+			"labels": {
+				"alertname": "test_title_0",
+				"instance_label": "test",
+				"label": "test"
+			},
+			"annotations": {
+				"annotation": "test"
+			},
+			"state": "Normal",
+			"activeAt": "0001-01-01T00:00:00Z",
+			"value": ""
+		}, {
+			"labels": {
+				"alertname": "test_title_1",
+				"instance_label": "test",
+				"label": "test"
+			},
+			"annotations": {
+				"annotation": "test"
+			},
+			"state": "Normal",
+			"activeAt": "0001-01-01T00:00:00Z",
+			"value": ""
+		}]
+	}
+}`, string(r.Body()))
+	})
+
+	t.Run("with the inclusion of private labels", func(t *testing.T) {
+		_, fakeAIM, api := setupAPI(t)
+		fakeAIM.GenerateAlertInstances(orgID, util.GenerateShortUID(), 2)
+		req, err := http.NewRequest("GET", "/api/v1/alerts?includePrivateLabels=true", nil)
+		require.NoError(t, err)
+		c := &models.ReqContext{Context: &web.Context{Req: req}, SignedInUser: &models.SignedInUser{OrgId: orgID}}
+
 		r := api.RouteGetAlertStatuses(c)
 		require.Equal(t, http.StatusOK, r.Status())
 		require.JSONEq(t, `
@@ -86,6 +128,7 @@ func TestRouteGetAlertStatuses(t *testing.T) {
 	}
 }`, string(r.Body()))
 	})
+
 }
 
 func TestRouteGetRuleStatuses(t *testing.T) {

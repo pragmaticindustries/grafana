@@ -9,17 +9,17 @@ import (
 	"strings"
 	"time"
 
-	apiv1 "github.com/prometheus/client_golang/api/prometheus/v1"
-
-	"github.com/grafana/grafana/pkg/services/ngalert/eval"
-	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
-	"github.com/grafana/grafana/pkg/services/ngalert/store"
-
 	"github.com/grafana/grafana/pkg/api/response"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/models"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	"github.com/grafana/grafana/pkg/services/ngalert/eval"
+	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/state"
+	"github.com/grafana/grafana/pkg/services/ngalert/store"
+
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	apiv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 type PrometheusSrv struct {
@@ -27,6 +27,8 @@ type PrometheusSrv struct {
 	manager state.AlertInstanceManager
 	store   store.RuleStore
 }
+
+const queryIncludePrivateLabels = "includePrivateLabels"
 
 func (srv PrometheusSrv) RouteGetAlertStatuses(c *models.ReqContext) response.Response {
 	alertResponse := apimodels.AlertResponse{
@@ -44,6 +46,10 @@ func (srv PrometheusSrv) RouteGetAlertStatuses(c *models.ReqContext) response.Re
 			valString = alertState.LastEvaluationString
 		}
 
+		if !c.QueryBoolWithDefault(queryIncludePrivateLabels, false) {
+			removePrivateLabels(alertState.Labels)
+		}
+
 		alertResponse.Data.Alerts = append(alertResponse.Data.Alerts, &apimodels.Alert{
 			Labels:      map[string]string(alertState.Labels),
 			Annotations: alertState.Annotations,
@@ -54,6 +60,14 @@ func (srv PrometheusSrv) RouteGetAlertStatuses(c *models.ReqContext) response.Re
 	}
 
 	return response.JSON(http.StatusOK, alertResponse)
+}
+
+func removePrivateLabels(labels data.Labels) {
+	for k := range labels {
+		if strings.HasPrefix(k, "__") && strings.HasSuffix(k, "__") {
+			delete(labels, k)
+		}
+	}
 }
 
 func getPanelIDFromRequest(r *http.Request) (int64, error) {
