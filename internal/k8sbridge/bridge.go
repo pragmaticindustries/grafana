@@ -73,24 +73,26 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, regis
 	}
 
 	schm := runtime.NewScheme()
-	schemaGroupVersion := k8schema.GroupVersion{
-		Group:   groupName,
-		Version: groupVersion,
-	}
-	schemaBuilder := &scheme.Builder{
-		GroupVersion: schemaGroupVersion,
-	}
 
 	models := registry.Coremodels()
 	schemas := make(schema.CoreSchemaList, 0, len(models))
 	for _, m := range models {
 		s := m.Schema()
-		schemas = append(schemas, s)
-		schemaBuilder.Register(s.RuntimeObjects()...)
-	}
 
-	if err := schemaBuilder.AddToScheme(schm); err != nil {
-		return nil, err
+		schemaBuilder := &scheme.Builder{
+			GroupVersion: k8schema.GroupVersion{
+				Group:   s.GroupName(),
+				Version: s.GroupVersion(),
+			},
+		}
+
+		schemaBuilder.Register(s.RuntimeObjects()...)
+
+		if err := schemaBuilder.AddToScheme(schm); err != nil {
+			return nil, err
+		}
+
+		schemas = append(schemas, s)
 	}
 
 	// TODO: pass models to clientset to create clients and register CRDs.
@@ -99,6 +101,8 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, regis
 		return nil, err
 	}
 
+	fmt.Println("scheme", schm)
+
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
 		Scheme: schm,
 	})
@@ -106,22 +110,20 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, regis
 		return nil, err
 	}
 
-	svc := &Service{
+	for _, m := range models {
+		if err := m.RegisterController(mgr); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Service{
 		config:  config,
 		client:  cset,
 		schemas: schemas,
 		manager: mgr,
 		enabled: enabled,
 		logger:  log.New("k8sbridge.service"),
-	}
-
-	for _, m := range models {
-		if err := m.RegisterController(svc); err != nil {
-			return nil, err
-		}
-	}
-
-	return svc, nil
+	}, nil
 }
 
 // IsDisabled
@@ -131,6 +133,7 @@ func (s *Service) IsDisabled() bool {
 
 // Run
 func (s *Service) Run(ctx context.Context) error {
+	fmt.Println("starting k8s service")
 	if err := s.manager.Start(ctx); err != nil {
 		return err
 	}
@@ -141,11 +144,6 @@ func (s *Service) Run(ctx context.Context) error {
 // RestConfig
 func (s *Service) RestConfig() *rest.Config {
 	return s.config
-}
-
-// Client
-func (s *Service) ClientForSchema(schema schema.ObjectSchema) (rest.Interface, error) {
-	return s.client.ClientForSchema(schema)
 }
 
 // ControllerManager

@@ -20,7 +20,7 @@ seqs: [
                 basicAuthPassword: string
                 withCredentials: bool | *false
                 isDefault: bool | *false
-                jsonData?: [string]: _
+                jsonData: string
                 version: int32
                 readOnly: bool | *false
             }

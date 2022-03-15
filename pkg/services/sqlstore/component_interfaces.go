@@ -37,20 +37,20 @@ type storeDS struct {
 	ss *SQLStore
 }
 
-func (s storeDS) Get(ctx context.Context, uid string) (datasource.ModelObject, error) {
+func (s storeDS) Get(ctx context.Context, uid string) (datasource.Datasource, error) {
 	cmd := &models.GetDataSourceQuery{
 		OrgId: 1, // Hardcode for now
 		Uid:   uid,
 	}
 
 	if err := s.ss.GetDataSource(ctx, cmd); err != nil {
-		return datasource.ModelObject{}, err
+		return datasource.Datasource{}, err
 	}
 
 	return s.oldToNew(cmd.Result), nil
 }
 
-func (s storeDS) Insert(ctx context.Context, ds datasource.ModelObject) error {
+func (s storeDS) Insert(ctx context.Context, ds datasource.Datasource) error {
 	cmd := &models.AddDataSourceCommand{
 		Name:              ds.Name,
 		Type:              ds.Spec.Type,
@@ -72,11 +72,19 @@ func (s storeDS) Insert(ctx context.Context, ds datasource.ModelObject) error {
 	return s.ss.AddDataSource(ctx, cmd)
 }
 
-func (s storeDS) Update(ctx context.Context, ds datasource.ModelObject) error {
+func (s storeDS) Update(ctx context.Context, ds datasource.Datasource) error {
 	rv, err := strconv.Atoi(ds.ResourceVersion)
 	if err != nil {
 		return err
 	}
+
+	jd := simplejson.New()
+	if d := ds.Spec.JsonData; d != "" {
+		if err := jd.UnmarshalJSON([]byte(d)); err != nil {
+			s.ss.log.Warn("error unmarshaling datasource JSON data", err)
+		}
+	}
+
 	cmd := &models.UpdateDataSourceCommand{
 		Name:              ds.Name,
 		Type:              ds.Spec.Type,
@@ -90,7 +98,7 @@ func (s storeDS) Update(ctx context.Context, ds datasource.ModelObject) error {
 		BasicAuthPassword: ds.Spec.BasicAuthPassword,
 		WithCredentials:   ds.Spec.WithCredentials,
 		IsDefault:         ds.Spec.IsDefault,
-		JsonData:          simplejson.NewFromAny(ds.Spec.JsonData),
+		JsonData:          jd,
 		// SecureJsonData: TODO,
 		Uid:     string(ds.UID),
 		OrgId:   1, // hardcode for now, TODO
@@ -102,18 +110,23 @@ func (s storeDS) Update(ctx context.Context, ds datasource.ModelObject) error {
 	return s.ss.UpdateDataSourceByUID(ctx, cmd)
 }
 
-func (s storeDS) Delete(ctx context.Context, uid string) error {
+func (s storeDS) Delete(ctx context.Context, name string) error {
 	return s.ss.DeleteDataSource(ctx, &models.DeleteDataSourceCommand{
-		UID:   uid,
+		Name:  name,
 		OrgID: 1, // hardcode for now, TODO
 	})
 }
 
 // oldToNew doesn't need to be method, but keeps things bundled
-func (s storeDS) oldToNew(ds *models.DataSource) datasource.ModelObject {
-	jdMap := ds.JsonData.MustMap()
-	cr := datasource.ModelObject{
-		Spec: datasource.ModelSpec{
+func (s storeDS) oldToNew(ds *models.DataSource) datasource.Datasource {
+	jd, err := ds.JsonData.MarshalJSON()
+	if err != nil {
+		jd = []byte{}
+		s.ss.log.Warn("error marshaling datasource JSON data", err)
+	}
+
+	cr := datasource.Datasource{
+		Spec: datasource.DatasourceSpec{
 			Type:              ds.Type,
 			Access:            string(ds.Access),
 			Url:               ds.Url,
@@ -125,7 +138,7 @@ func (s storeDS) oldToNew(ds *models.DataSource) datasource.ModelObject {
 			BasicAuthPassword: ds.BasicAuthPassword,
 			WithCredentials:   ds.WithCredentials,
 			IsDefault:         ds.IsDefault,
-			JsonData:          jdMap,
+			JsonData:          string(jd),
 			// SecureJsonData: TODO,
 			//Version: ds.Version,
 			// Note: Not mapped is created / updated time stamps

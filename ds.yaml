@@ -5,7 +5,7 @@ metadata:
 spec:
   type: prometheus
   access: public
-  url: http://localhost:1111/api/prom
+  url: http://localhost:1111/api/prom1
   user: test
   password: test
   database: test

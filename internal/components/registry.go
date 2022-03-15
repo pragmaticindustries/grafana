@@ -1,22 +1,15 @@
 package components
 
 import (
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/grafana/grafana/pkg/schema"
 )
 
-// Bridge
-type Bridge interface {
-	ClientForSchema(schema schema.ObjectSchema) (rest.Interface, error)
-	ControllerManager() ctrl.Manager
-}
-
 // Coremodel
 type Coremodel interface {
 	Schema() schema.ObjectSchema
-	RegisterController(bridge Bridge) error
+	RegisterController(ctrl.Manager) error
 }
 
 // Registry
