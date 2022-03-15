@@ -2,6 +2,8 @@ package coreplugin
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana/pkg/infra/log"
@@ -21,6 +23,10 @@ type corePlugin struct {
 // New returns a new backendplugin.PluginFactoryFunc for creating a core (built-in) backendplugin.Plugin.
 func New(opts backend.ServeOpts) backendplugin.PluginFactoryFunc {
 	return func(pluginID string, logger log.Logger, env []string) (backendplugin.Plugin, error) {
+		for _, e := range env {
+			k := strings.Split(e, "=")
+			os.Setenv(k[0], k[1])
+		}
 		return &corePlugin{
 			pluginID:            pluginID,
 			logger:              logger,
