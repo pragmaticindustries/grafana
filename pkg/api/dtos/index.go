@@ -9,6 +9,7 @@ import (
 type IndexViewData struct {
 	User                    *CurrentUser
 	Settings                map[string]interface{}
+	CustomCss               string
 	AppUrl                  string
 	AppSubUrl               string
 	GoogleAnalyticsId       string

@@ -15,6 +15,10 @@ Grafana allows you to query, visualize, alert on and understand your metrics no 
 - **Alerting:** Visually define alert rules for your most important metrics. Grafana will continuously evaluate and send notifications to systems like Slack, PagerDuty, VictorOps, OpsGenie.
 - **Mixed Data Sources:** Mix different data sources in the same graph! You can specify a data source on a per-query basis. This works for even custom datasources.
 
+## PI Changes
+
+Use ENV Variable `CUSTOM_CSS_LOCATION` to set theme location (e.g: `public/build/grafana.light.5c06b45b364d0a197af2.css`).
+
 ## Get started
 
 - [Get Grafana](https://grafana.com/get)

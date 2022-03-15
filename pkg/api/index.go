@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -582,6 +583,11 @@ func (hs *HTTPServer) setIndexViewData(c *models.ReqContext) (*dtos.IndexViewDat
 		return nil, err
 	}
 
+	env, b := os.LookupEnv("CUSTOM_CSS_LOCATION")
+	if b == false {
+		env = ""
+	}
+	//env = "1245"
 	data := dtos.IndexViewData{
 		User: &dtos.CurrentUser{
 			Id:                         c.UserId,
@@ -604,6 +610,7 @@ func (hs *HTTPServer) setIndexViewData(c *models.ReqContext) (*dtos.IndexViewDat
 		},
 		Settings:                settings,
 		Theme:                   prefs.Theme,
+		CustomCss:               env,
 		AppUrl:                  appURL,
 		AppSubUrl:               appSubURL,
 		GoogleAnalyticsId:       setting.GoogleAnalyticsId,
